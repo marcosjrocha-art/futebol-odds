@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenv
+.venv/
+venv/
+
+# Cache
+data/http_cache*
+*.sqlite
+
+# Dados grandes baixados
+data/raw/
+
+# Editor / SO
+.vscode/
+.DS_Store
