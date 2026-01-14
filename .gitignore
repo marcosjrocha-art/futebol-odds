@@ -1,20 +1,28 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+*.so
+*.egg-info/
+dist/
+build/
 
 # Virtualenv
 .venv/
 venv/
+ENV/
 
-# Cache
-data/http_cache*
-*.sqlite
+# Logs
+logs/
+*.log
 
-# Dados grandes baixados
+# Cache e dados baixados
+data/http_cache/
 data/raw/
 
-# Editor / SO
-.vscode/
+# OS / Editor
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
