@@ -1,13 +1,12 @@
 # ============================================================
 # Futebol Odds Platform — UI completa + Poisson + ML + Placar Exato FT/HT
-# Mantém:
-# - 3 temporadas: 2324 + 2425 + 2526 (pesos por recência)
-# - Campos na tela: faixa de odds/prob (para dicas)
-# - Mercados: 1X2 FT, Over FT, BTTS FT (ML), Over HT, 1+ HT por time,
-#   2+ gols FT/HT por time, BTTS HT, consistência HT->FT e 1º&2º tempo
-# - Placar Exato: FT e HT (com tail)
-# - 3 Melhores apostas + odd mínima (justa final)
-# - Cards de concordância Poisson vs ML (top)
+# Ajustes:
+# - 5 dicas (somente mercados tradicionais)
+# - Under FT/HT
+# - BTTS (Ambas Marcam) SIM/NÃO
+# - Dupla chance 1X / 12 / 2X
+# - Cards: 5 placares FT mais prováveis e 5 menos prováveis
+# - NOVO: limitar cards de placar a no máximo 5x5
 # ============================================================
 
 import time
@@ -68,7 +67,7 @@ LEAGUES: Dict[str, str] = {
     "P1": "Portugal Primeira Liga",
     "T1": "Turkey Super Lig",
     "G1": "Greece Super League",
-    "EC": "Conference",  # seu pedido
+    "EC": "Conference",
 }
 
 # ----------------------------
@@ -83,6 +82,9 @@ HT_OU_LINES = [0.5, 1.5, 2.5]
 
 SHOW_CS_FT_MAX = 5
 SHOW_CS_HT_MAX = 3
+
+# Limite dos cards de placar (mais/menos provável)
+CARDS_CS_FT_MAX = 5  # <= pedido do usuário: máximo 5x5
 
 # shrinkage
 K_SHRINK = 40
@@ -126,7 +128,6 @@ def load_league_data(league: str, seasons: List[str]) -> pd.DataFrame:
 
     out = pd.concat(frames, ignore_index=True)
 
-    # tipos básicos
     for col in ["FTHG", "FTAG", "HTHG", "HTAG"]:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce")
@@ -140,9 +141,6 @@ def load_league_data(league: str, seasons: List[str]) -> pd.DataFrame:
 
 def pmf(k: int, lam: float) -> float:
     return exp(-lam) * lam**k / factorial(k)
-
-def p_ge_1(lam: float) -> float:
-    return 1.0 - exp(-lam)
 
 def score_matrix(lh: float, la: float, max_g: int) -> Dict[Tuple[int, int], float]:
     m: Dict[Tuple[int, int], float] = {}
@@ -167,27 +165,19 @@ def markets_from_matrix(M: Dict[Tuple[int, int], float], lines: List[float]) -> 
 
     p_btts = sum(p for (h, a), p in M.items() if h > 0 and a > 0)
 
-    p_home_1p = sum(p for (h, a), p in M.items() if h >= 1)
-    p_away_1p = sum(p for (h, a), p in M.items() if a >= 1)
-    p_home_2p = sum(p for (h, a), p in M.items() if h >= 2)
-    p_away_2p = sum(p for (h, a), p in M.items() if a >= 2)
-
-    totals = {}
+    totals_over = {}
     for line in lines:
-        totals[line] = sum(p for (h, a), p in M.items() if (h + a) > line)
+        totals_over[line] = sum(p for (h, a), p in M.items() if (h + a) > line)
 
     out = {
         "p_home": p_home,
         "p_draw": p_draw,
         "p_away": p_away,
         "p_btts": p_btts,
-        "p_home_1p": p_home_1p,
-        "p_away_1p": p_away_1p,
-        "p_home_2p": p_home_2p,
-        "p_away_2p": p_away_2p,
     }
-    for line, pv in totals.items():
+    for line, pv in totals_over.items():
         out[f"p_over_{line}"] = pv
+        out[f"p_under_{line}"] = max(0.0, 1.0 - pv)
     return out
 
 # ============================================================
@@ -366,17 +356,6 @@ def html_escape(s: str) -> str:
 def select_options(values: List[str], selected: str) -> str:
     return "\n".join([f'<option value="{html_escape(v)}" {"selected" if v==selected else ""}>{html_escape(v)}</option>' for v in values])
 
-def correct_score_table(M: Dict[Tuple[int, int], float], max_show: int) -> Tuple[List[Tuple[str, float, float]], float]:
-    rows = []
-    shown = 0.0
-    for h in range(max_show + 1):
-        for a in range(max_show + 1):
-            p = float(M.get((h, a), 0.0))
-            shown += p
-            rows.append((f"{h}-{a}", p, odd(p)))
-    other = max(0.0, 1.0 - shown)
-    return rows, other
-
 def clamp_float(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, float(x)))
 
@@ -388,11 +367,24 @@ def parse_float(x: Optional[float], default: float) -> float:
     except Exception:
         return float(default)
 
+def top_and_bottom_scores_limited(M: Dict[Tuple[int, int], float], k: int = 5, max_score: int = 5) -> Tuple[List[Tuple[str, float, float]], List[Tuple[str, float, float]]]:
+    # Filtra para somente placares 0..max_score x 0..max_score
+    items = [((h, a), float(p)) for (h, a), p in M.items() if (0 <= h <= max_score and 0 <= a <= max_score)]
+    items.sort(key=lambda x: x[1], reverse=True)  # maior prob primeiro
+
+    top = items[:k]
+    # menor prob primeiro (pega os k últimos e ordena crescente)
+    bottom = sorted(items[-k:], key=lambda x: x[1])
+
+    top_rows = [(f"{h}-{a}", p, odd(p)) for ((h, a), p) in top]
+    bottom_rows = [(f"{h}-{a}", p, odd(p)) for ((h, a), p) in bottom]
+    return top_rows, bottom_rows
+
 # ============================================================
 # App
 # ============================================================
 
-app = FastAPI(title="Futebol Odds Platform", version="2.1.1")
+app = FastAPI(title="Futebol Odds Platform", version="2.3.1")
 
 @app.get("/", response_class=HTMLResponse)
 def view(
@@ -405,7 +397,6 @@ def view(
     p_min: Optional[float] = DEFAULT_P_MIN,
     p_max: Optional[float] = DEFAULT_P_MAX,
 ):
-    # faixas
     odd_min = parse_float(odd_min, DEFAULT_ODD_MIN)
     odd_max = parse_float(odd_max, DEFAULT_ODD_MAX)
     p_min = parse_float(p_min, DEFAULT_P_MIN)
@@ -449,75 +440,104 @@ def view(
     M_HT = score_matrix(lh_ht, la_ht, MAX_HT)
     mk_ht = markets_from_matrix(M_HT, HT_OU_LINES)
 
-    # 2º tempo aprox
-    lh_2t = max(0.0001, lh_ft - lh_ht)
-    la_2t = max(0.0001, la_ft - la_ht)
-
-    # consistência
-    p_home_ht_and_ft = p_ge_1(lh_ht)
-    p_away_ht_and_ft = p_ge_1(la_ht)
-    p_home_ht_and_2t = p_ge_1(lh_ht) * p_ge_1(lh_2t)
-    p_away_ht_and_2t = p_ge_1(la_ht) * p_ge_1(la_2t)
-
     # ML
     ml = train_ml_models(df_all)
     ml_status = ml.get("_status", {})
     ml_ok = bool(ml_status.get("ok"))
 
-    def apply_ml_binary(key: str, p_poi: float, feat: List[float]) -> Tuple[float, str, bool]:
+    def apply_ml_over(line: float, p_over_poi: float, feat: List[float]) -> Tuple[float, str, bool]:
+        key = f"over_ft_{line}"
         if ml_ok and key in ml and ml[key].get("approved") and ml[key].get("model") is not None:
             model = ml[key]["model"]
+            p_over_ml = float(model.predict_proba(np.array([feat], float))[0, 1])
+            return p_over_ml, "ML (aprovado)", True
+        return float(p_over_poi), "Poisson (ML rejeitado)", False
+
+    def apply_ml_btts(p_poi: float, feat: List[float]) -> Tuple[float, str, bool]:
+        if ml_ok and "btts" in ml and ml["btts"].get("approved") and ml["btts"].get("model") is not None:
+            model = ml["btts"]["model"]
             p_ml = float(model.predict_proba(np.array([feat], float))[0, 1])
             return p_ml, "ML (aprovado)", True
         return float(p_poi), "Poisson (ML rejeitado)", False
 
     dist = abs((lh_ft + la_ft) - (poisson["avg_h"] + poisson["avg_a"]))
-    feat_bin = [0.0, lh_ft, la_ft, poisson["att_h"][home_team], poisson["att_a"][away_team], dist]
+    feat = [0.0, lh_ft, la_ft, poisson["att_h"][home_team], poisson["att_a"][away_team], dist]
 
     # 1X2 FT (Poisson)
     p_home = mk_ft["p_home"]
     p_draw = mk_ft["p_draw"]
     p_away = mk_ft["p_away"]
 
-    # BTTS FT (ML opcional)
-    feat_bin[0] = mk_ft["p_btts"]
-    p_btts_final, tag_btts, btts_ml_used = apply_ml_binary("btts", mk_ft["p_btts"], feat_bin)
+    # Dupla chance FT (Poisson)
+    p_1x = max(0.0, min(1.0, p_home + p_draw))
+    p_12 = max(0.0, min(1.0, p_home + p_away))
+    p_2x = max(0.0, min(1.0, p_away + p_draw))
 
-    # BTTS HT (Poisson)
-    p_btts_ht = mk_ht["p_btts"]
+    # BTTS FT (ML opcional) — SIM e NÃO
+    p_btts_ft_poi = mk_ft["p_btts"]
+    feat[0] = p_btts_ft_poi
+    p_btts_ft_final, tag_btts_ft, btts_ml_used = apply_ml_btts(p_btts_ft_poi, feat)
+    p_btts_ft_no_poi = max(0.0, 1.0 - p_btts_ft_poi)
+    p_btts_ft_no_final = max(0.0, 1.0 - p_btts_ft_final)
 
-    # Over 0.5 HT por time (1+ HT)
-    p_home_o05_ht = mk_ht["p_home_1p"]
-    p_away_o05_ht = mk_ht["p_away_1p"]
+    # BTTS HT (Poisson) — SIM e NÃO
+    p_btts_ht_sim = mk_ht["p_btts"]
+    p_btts_ht_no = max(0.0, 1.0 - p_btts_ht_sim)
 
-    # 2+ gols por time
-    p_home_2p_ft = mk_ft["p_home_2p"]
-    p_away_2p_ft = mk_ft["p_away_2p"]
-    p_home_2p_ht = mk_ht["p_home_2p"]
-    p_away_2p_ht = mk_ht["p_away_2p"]
-
-    # Overs FT (ML opcional)
-    overs_ft_rows = []
+    # Over/Under FT (ML opcional no Over; Under = 1-Over)
+    ou_ft_rows = []
     for line in FT_OU_LINES:
-        p_poi = mk_ft[f"p_over_{line}"]
-        feat_bin[0] = p_poi
-        key = f"over_ft_{line}"
-        p_final, tag, used = apply_ml_binary(key, p_poi, feat_bin)
-        overs_ft_rows.append((line, p_poi, p_final, tag, used))
+        p_over_poi = mk_ft[f"p_over_{line}"]
+        feat[0] = p_over_poi
+        p_over_final, tag, used = apply_ml_over(line, p_over_poi, feat)
+        p_under_poi = max(0.0, 1.0 - p_over_poi)
+        p_under_final = max(0.0, 1.0 - p_over_final)
+        ou_ft_rows.append((line, p_over_poi, p_over_final, p_under_poi, p_under_final, tag, used))
 
-    # Overs HT (Poisson)
-    overs_ht_rows = [(line, mk_ht[f"p_over_{line}"], odd(mk_ht[f"p_over_{line}"])) for line in HT_OU_LINES]
+    # Over/Under HT (Poisson)
+    ou_ht_rows = []
+    for line in HT_OU_LINES:
+        p_over = mk_ht[f"p_over_{line}"]
+        p_under = mk_ht[f"p_under_{line}"]
+        ou_ht_rows.append((line, p_over, p_under))
 
-    # Placar exato FT/HT
-    cs_ft_rows, cs_ft_other = correct_score_table(M_FT, SHOW_CS_FT_MAX)
-    cs_ht_rows, cs_ht_other = correct_score_table(M_HT, SHOW_CS_HT_MAX)
+    # Placar exato FT/HT (tabelas)
+    cs_ft_table = [(f"{h}-{a}", float(M_FT.get((h, a), 0.0)), odd(float(M_FT.get((h, a), 0.0))))
+                   for h in range(SHOW_CS_FT_MAX + 1) for a in range(SHOW_CS_FT_MAX + 1)]
+    shown_ft = sum(p for _, p, _ in cs_ft_table)
+    cs_ft_other = max(0.0, 1.0 - shown_ft)
 
-    # ----------------------------
-    # 3 Melhores apostas (faixas da UI)
-    # ----------------------------
+    cs_ht_table = [(f"{h}-{a}", float(M_HT.get((h, a), 0.0)), odd(float(M_HT.get((h, a), 0.0))))
+                   for h in range(SHOW_CS_HT_MAX + 1) for a in range(SHOW_CS_HT_MAX + 1)]
+    shown_ht = sum(p for _, p, _ in cs_ht_table)
+    cs_ht_other = max(0.0, 1.0 - shown_ht)
+
+    # Cards TOP/BOTTOM 5 FT limitados a 0..5 x 0..5
+    top5_ft, bottom5_ft = top_and_bottom_scores_limited(M_FT, k=5, max_score=CARDS_CS_FT_MAX)
+
+    def score_cards(rows: List[Tuple[str, float, float]], title: str) -> str:
+        cards = []
+        for placar, prob, o in rows:
+            cards.append(
+                '<div class="border rounded-xl p-4 bg-gray-50">'
+                f'<div class="text-xs text-gray-500">{html_escape(title)}</div>'
+                f'<div class="text-lg font-semibold">{html_escape(placar)}</div>'
+                f'<div class="text-sm">Prob.: <b>{prob:.4f}</b></div>'
+                f'<div class="text-sm">Odd justa: <b>{o}</b></div>'
+                '</div>'
+            )
+        return "\n".join(cards)
+
+    top5_cards_html = score_cards(top5_ft, "Placar FT (mais provável)")
+    bottom5_cards_html = score_cards(bottom5_ft, "Placar FT (menos provável)")
+
+    # ============================================================
+    # DICAS: 5 e APENAS mercados tradicionais
+    # ============================================================
+
     candidates = []
 
-    def add_candidate(name: str, p_poi: float, p_final: float, tag: str, ml_used: bool):
+    def add_tip(name: str, p_poi: float, p_final: float, tag: str, ml_used: bool):
         o_final = odd(p_final)
         if not (p_min <= p_final <= p_max):
             return
@@ -536,25 +556,33 @@ def view(
             "score": score
         })
 
-    add_candidate("BTTS FT (Sim)", mk_ft["p_btts"], p_btts_final, tag_btts, btts_ml_used)
-    for (line, p_poi, p_final, tag, used) in overs_ft_rows:
-        add_candidate(f"Over FT {line}", p_poi, p_final, tag, used)
+    add_tip("1X2 (FT) — Casa", p_home, p_home, "Poisson", False)
+    add_tip("1X2 (FT) — Empate", p_draw, p_draw, "Poisson", False)
+    add_tip("1X2 (FT) — Visitante", p_away, p_away, "Poisson", False)
 
-    # Poisson-only extras
-    add_candidate("BTTS HT (Sim)", p_btts_ht, p_btts_ht, "Poisson", False)
-    add_candidate("Over 0.5 HT — Casa", p_home_o05_ht, p_home_o05_ht, "Poisson", False)
-    add_candidate("Over 0.5 HT — Visitante", p_away_o05_ht, p_away_o05_ht, "Poisson", False)
-    add_candidate("Casa marca no 1º e 2º tempo", p_home_ht_and_2t, p_home_ht_and_2t, "Poisson", False)
-    add_candidate("Fora marca no 1º e 2º tempo", p_away_ht_and_2t, p_away_ht_and_2t, "Poisson", False)
-    add_candidate("Casa 2+ FT", p_home_2p_ft, p_home_2p_ft, "Poisson", False)
-    add_candidate("Fora 2+ FT", p_away_2p_ft, p_away_2p_ft, "Poisson", False)
-    add_candidate("Casa 2+ HT", p_home_2p_ht, p_home_2p_ht, "Poisson", False)
-    add_candidate("Fora 2+ HT", p_away_2p_ht, p_away_2p_ht, "Poisson", False)
+    add_tip("Dupla Chance (FT) — 1X (Casa/Empate)", p_1x, p_1x, "Poisson", False)
+    add_tip("Dupla Chance (FT) — 12 (Casa/Fora)", p_12, p_12, "Poisson", False)
+    add_tip("Dupla Chance (FT) — 2X (Fora/Empate)", p_2x, p_2x, "Poisson", False)
 
-    best3 = sorted(candidates, key=lambda x: x["score"])[:3]
-    best3_cards = []
-    for i, c in enumerate(best3, 1):
-        best3_cards.append(
+    add_tip("BTTS (Ambas Marcam) FT — SIM", p_btts_ft_poi, p_btts_ft_final, tag_btts_ft, btts_ml_used)
+    add_tip("BTTS (Ambas Marcam) FT — NÃO", p_btts_ft_no_poi, p_btts_ft_no_final, tag_btts_ft, btts_ml_used)
+
+    add_tip("BTTS (Ambas Marcam) HT — SIM", p_btts_ht_sim, p_btts_ht_sim, "Poisson", False)
+    add_tip("BTTS (Ambas Marcam) HT — NÃO", p_btts_ht_no, p_btts_ht_no, "Poisson", False)
+
+    for (line, p_over_poi, p_over_final, p_under_poi, p_under_final, tag, used) in ou_ft_rows:
+        add_tip(f"Over (FT) {line}", p_over_poi, p_over_final, tag, used)
+        add_tip(f"Under (FT) {line}", p_under_poi, p_under_final, tag, used)
+
+    for (line, p_over, p_under) in ou_ht_rows:
+        add_tip(f"Over (HT) {line}", p_over, p_over, "Poisson", False)
+        add_tip(f"Under (HT) {line}", p_under, p_under, "Poisson", False)
+
+    best5 = sorted(candidates, key=lambda x: x["score"])[:5]
+
+    tips_cards = []
+    for i, c in enumerate(best5, 1):
+        tips_cards.append(
             '<div class="border rounded-xl p-4 bg-gray-50">'
             f'<div class="text-xs text-gray-500">Dica #{i}</div>'
             f'<div class="text-lg font-semibold">{html_escape(c["name"])}</div>'
@@ -564,31 +592,10 @@ def view(
             f'<div class="text-xs text-gray-500 mt-2">Concordância |Poisson-ML|: {c["diff"]:.4f}</div>'
             '</div>'
         )
-    best3_html = "\n".join(best3_cards) if best3_cards else (
-        "<div class='text-sm text-gray-600'>Não achei 3 mercados dentro das faixas. "
+    best5_html = "\n".join(tips_cards) if tips_cards else (
+        "<div class='text-sm text-gray-600'>Não achei 5 mercados dentro das faixas. "
         "Tente ampliar odd/prob nas configurações.</div>"
     )
-
-    # Concordância Poisson vs ML (top)
-    tips = []
-    for (line, p_poi, p_final, tag, used) in overs_ft_rows:
-        tips.append((abs(p_poi - p_final), f"Over FT {line}", p_poi, p_final, odd(p_poi), odd(p_final), tag))
-    tips.append((abs(mk_ft["p_btts"] - p_btts_final), "BTTS FT (Sim)", mk_ft["p_btts"], p_btts_final, odd(mk_ft["p_btts"]), odd(p_btts_final), tag_btts))
-    tips.append((0.0, "BTTS HT (Sim) (Poisson)", p_btts_ht, p_btts_ht, odd(p_btts_ht), odd(p_btts_ht), "Poisson"))
-
-    tips_sorted = sorted(tips, key=lambda x: x[0])[:10]
-    tips_cards = []
-    for diff, name, p1, p2, o1, o2, tag in tips_sorted:
-        tips_cards.append(
-            '<div class="border rounded p-3">'
-            f'<div class="font-semibold">{html_escape(name)}</div>'
-            f'<div class="text-xs text-gray-500">Método: {html_escape(tag)}</div>'
-            f'<div class="mt-1">Poisson: p={p1:.4f} (odd {o1})</div>'
-            f'<div>ML/Final: p={p2:.4f} (odd {o2})</div>'
-            f'<div class="text-xs text-gray-500 mt-1">Diferença: {diff:.4f}</div>'
-            '</div>'
-        )
-    tips_html = "\n".join(tips_cards)
 
     # selects
     league_select = "\n".join(
@@ -605,17 +612,25 @@ def view(
 
     ht_aviso = "HT fallback (sem HT real suficiente)." if not ht_calibrated else "HT calibrado com HTHG/HTAG (quando disponível)."
 
-    # Montar blocos de placar exato (FT/HT)
-    cs_ft_html = "".join([f"<div class='flex justify-between border rounded p-2'><span>{s}</span><b>{o}</b></div>" for (s, p, o) in cs_ft_rows])
-    cs_ht_html = "".join([f"<div class='flex justify-between border rounded p-2'><span>{s}</span><b>{o}</b></div>" for (s, p, o) in cs_ht_rows])
+    cs_ft_html = "".join([f"<div class='flex justify-between border rounded p-2'><span>{s}</span><b>{o}</b></div>" for (s, p, o) in cs_ft_table])
+    cs_ht_html = "".join([f"<div class='flex justify-between border rounded p-2'><span>{s}</span><b>{o}</b></div>" for (s, p, o) in cs_ht_table])
 
-    # Over/Under FT (texto)
     ou_ft_html = "".join([
-        f"<div>Over {line}: Poisson <b>{odd(pp)}</b> | Final <b>{odd(pf)}</b> <span class='text-xs text-gray-500'>({html_escape(tag)})</span></div>"
-        for (line, pp, pf, tag, used) in overs_ft_rows
+        f"<div class='mb-1'>"
+        f"<b>Linha {line}</b>: "
+        f"Over — Poisson <b>{odd(p_over_poi)}</b> | Final <b>{odd(p_over_final)}</b> "
+        f"<span class='text-xs text-gray-500'>({html_escape(tag)})</span>"
+        f"<br/>"
+        f"Under — Poisson <b>{odd(p_under_poi)}</b> | Final <b>{odd(p_under_final)}</b>"
+        f"</div>"
+        for (line, p_over_poi, p_over_final, p_under_poi, p_under_final, tag, used) in ou_ft_rows
     ])
 
-    ou_ht_html = "".join([f"<div>Over {line}: Poisson <b>{o}</b></div>" for (line, p, o) in overs_ht_rows])
+    ou_ht_html = "".join([
+        f"<div class='mb-1'><b>Linha {line}</b>: "
+        f"Over <b>{odd(p_over)}</b> | Under <b>{odd(p_under)}</b></div>"
+        for (line, p_over, p_under) in ou_ht_rows
+    ])
 
     return f"""
     <!doctype html>
@@ -696,13 +711,36 @@ def view(
           </div>
         </div>
 
+        <!-- LINHA 1: 5 melhores apostas -->
         <div class="bg-white rounded-2xl shadow p-6 mb-6">
-          <h2 class="text-lg font-semibold mb-2">🔥 3 Melhores apostas (com odd mínima)</h2>
+          <h2 class="text-lg font-semibold mb-2">🔥 5 Melhores apostas (com odd mínima)</h2>
           <p class="text-sm text-gray-600 mb-4">
-            Odd mínima = odd justa final. Se o mercado oferecer maior, pode indicar valor (sem garantia).
+            Apenas mercados tradicionais: 1X2, Dupla Chance, Over/Under, BTTS (Sim/Não).
           </p>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {best3_html}
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            {best5_html}
+          </div>
+        </div>
+
+        <!-- LINHA 2: 5 placares mais prováveis (FT) -->
+        <div class="bg-white rounded-2xl shadow p-6 mb-6">
+          <h2 class="text-lg font-semibold mb-2">🎯 5 placares FT mais prováveis</h2>
+          <p class="text-sm text-gray-600 mb-4">
+            Considera apenas placares de <b>0–{CARDS_CS_FT_MAX} gols</b> por time (máx. {CARDS_CS_FT_MAX}x{CARDS_CS_FT_MAX}).
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            {top5_cards_html}
+          </div>
+        </div>
+
+        <!-- LINHA 3: 5 placares menos prováveis (FT) -->
+        <div class="bg-white rounded-2xl shadow p-6 mb-6">
+          <h2 class="text-lg font-semibold mb-2">🧊 5 placares FT menos prováveis</h2>
+          <p class="text-sm text-gray-600 mb-4">
+            Considera apenas placares de <b>0–{CARDS_CS_FT_MAX} gols</b> por time (máx. {CARDS_CS_FT_MAX}x{CARDS_CS_FT_MAX}).
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            {bottom5_cards_html}
           </div>
         </div>
 
@@ -714,46 +752,29 @@ def view(
             <div class="mt-3">
               <h3 class="font-semibold">1X2 (FT) — Poisson</h3>
               <div class="text-sm mt-1">
-                Home <b>{odd(p_home)}</b> | Draw <b>{odd(p_draw)}</b> | Away <b>{odd(p_away)}</b>
+                Casa <b>{odd(p_home)}</b> | Empate <b>{odd(p_draw)}</b> | Fora <b>{odd(p_away)}</b>
+              </div>
+
+              <h3 class="font-semibold mt-3">Dupla Chance (FT) — Poisson</h3>
+              <div class="text-sm mt-1">
+                1X (Casa/Empate) <b>{odd(p_1x)}</b> |
+                12 (Casa/Fora) <b>{odd(p_12)}</b> |
+                2X (Fora/Empate) <b>{odd(p_2x)}</b>
               </div>
             </div>
 
             <div class="mt-4">
-              <h3 class="font-semibold">BTTS</h3>
+              <h3 class="font-semibold">BTTS (Ambas Marcam)</h3>
               <div class="text-sm mt-2">
-                <div>BTTS FT (Sim) — Poisson <b>{odd(mk_ft["p_btts"])}</b> | {html_escape(tag_btts)} <b>{odd(p_btts_final)}</b></div>
-                <div>BTTS HT (Sim) — Poisson <b>{odd(p_btts_ht)}</b></div>
-              </div>
-            </div>
-
-            <div class="mt-4">
-              <h3 class="font-semibold">Over 0.5 HT por time (1+ HT)</h3>
-              <div class="text-sm mt-2">
-                <div>Casa 1+ HT: p={p_home_o05_ht:.4f} | odd <b>{odd(p_home_o05_ht)}</b></div>
-                <div>Fora 1+ HT: p={p_away_o05_ht:.4f} | odd <b>{odd(p_away_o05_ht)}</b></div>
-              </div>
-            </div>
-
-            <div class="mt-4">
-              <h3 class="font-semibold">Consistência por tempo (Poisson)</h3>
-              <div class="text-sm mt-2">
-                <div>Casa marca no HT e no FT: p={p_home_ht_and_ft:.4f} | odd <b>{odd(p_home_ht_and_ft)}</b></div>
-                <div>Fora marca no HT e no FT: p={p_away_ht_and_ft:.4f} | odd <b>{odd(p_away_ht_and_ft)}</b></div>
-                <div class="mt-2">Casa marca no 1º e 2º tempo: p={p_home_ht_and_2t:.4f} | odd <b>{odd(p_home_ht_and_2t)}</b></div>
-                <div>Fora marca no 1º e 2º tempo: p={p_away_ht_and_2t:.4f} | odd <b>{odd(p_away_ht_and_2t)}</b></div>
-                <div class="text-xs text-gray-500 mt-2">
-                  Nota: “HT e FT” vira informativo (p≈P(HT≥1)). “1º e 2º tempo” é a consistência real.
+                <div class="mb-2">
+                  <b>FT</b> — SIM: Poisson <b>{odd(p_btts_ft_poi)}</b> | Final <b>{odd(p_btts_ft_final)}</b>
+                  <span class='text-xs text-gray-500'>({html_escape(tag_btts_ft)})</span>
+                  <br/>
+                  <b>FT</b> — NÃO: Poisson <b>{odd(p_btts_ft_no_poi)}</b> | Final <b>{odd(p_btts_ft_no_final)}</b>
                 </div>
-              </div>
-            </div>
-
-            <div class="mt-4">
-              <h3 class="font-semibold">Time marca 2+ gols</h3>
-              <div class="text-sm mt-2">
-                <div><b>FT</b> — Casa 2+: p={p_home_2p_ft:.4f} | odd <b>{odd(p_home_2p_ft)}</b></div>
-                <div><b>FT</b> — Fora 2+: p={p_away_2p_ft:.4f} | odd <b>{odd(p_away_2p_ft)}</b></div>
-                <div class="mt-2"><b>HT</b> — Casa 2+: p={p_home_2p_ht:.4f} | odd <b>{odd(p_home_2p_ht)}</b></div>
-                <div><b>HT</b> — Fora 2+: p={p_away_2p_ht:.4f} | odd <b>{odd(p_away_2p_ht)}</b></div>
+                <div>
+                  <b>HT</b> — SIM: Poisson <b>{odd(p_btts_ht_sim)}</b> | NÃO: Poisson <b>{odd(p_btts_ht_no)}</b>
+                </div>
               </div>
             </div>
 
@@ -794,11 +815,7 @@ def view(
         </div>
 
         <div class="bg-white rounded-2xl shadow p-6 mt-6">
-          <h2 class="text-lg font-semibold mb-2">Concordância Poisson vs ML (top)</h2>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            {tips_html}
-          </div>
-          <p class="text-xs text-gray-500 mt-6">
+          <p class="text-xs text-gray-500">
             Observação: estimativas estatísticas. Não há promessa de lucro.
           </p>
         </div>
