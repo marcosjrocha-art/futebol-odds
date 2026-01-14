@@ -869,9 +869,15 @@ def page_modelos():
             </p>
           </div>
 
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             <a href="/" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
-              ← Voltar
+              🏠 Odds (Home)
+            </a>
+            <span class="px-4 py-2 rounded-lg bg-slate-700 text-white cursor-default">
+              📊 Modelos
+            </span>
+            <a href="/backtest" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
+              🧪 Backtest
             </a>
           </div>
         </div>
@@ -974,9 +980,16 @@ def page_backtest():
             </p>
           </div>
 
-          <div class="flex gap-2">
-            <a href="/" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">← Voltar</a>
-            <a href="/modelos" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">📊 Modelos</a>
+          <div class="flex gap-2 flex-wrap">
+            <a href="/" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
+              🏠 Odds (Home)
+            </a>
+            <a href="/modelos" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
+              📊 Modelos
+            </a>
+            <span class="px-4 py-2 rounded-lg bg-slate-700 text-white cursor-default">
+              🧪 Backtest
+            </span>
           </div>
         </div>
 
