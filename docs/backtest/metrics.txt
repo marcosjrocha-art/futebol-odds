@@ -1,0 +1,15 @@
+Backtest educacional — validação temporal
+Treino: 2324, 2425 | Teste: 2526
+Métricas: LogLoss e Brier (menor é melhor)
+
+== Home Win (FT) ==
+Poisson: LogLoss=0.8119 | Brier=0.2940
+ML(Platt): LogLoss=0.6617 | Brier=0.2345
+
+== BTTS (FT) - SIM ==
+Poisson: LogLoss=0.6956 | Brier=0.2511
+ML(Platt): LogLoss=0.7013 | Brier=0.2537
+
+== Over 2.5 (FT) ==
+Poisson: LogLoss=0.6927 | Brier=0.2496
+ML(Platt): LogLoss=0.6996 | Brier=0.2526
