@@ -18,3 +18,4 @@ scikit-learn==1.5.2
 
 redis==5.2.0
 rq==2.1.0
+tabulate>=0.9
