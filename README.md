@@ -92,6 +92,37 @@ A partir da matriz são derivados:
 Caso contrário, o sistema mantém **exclusivamente o Poisson**.
 
 ---
+---
+
+## 📈 Calibração e validação
+
+O sistema avalia objetivamente se o uso de Machine Learning **melhora a qualidade das probabilidades** em relação ao Poisson puro.
+
+### Validação temporal
+- **Treino**: temporadas 2023/24 + 2024/25
+- **Teste**: temporada 2025/26 (dados fora da amostra)
+
+### Métricas avaliadas
+- **LogLoss** (menor é melhor)
+- **Brier Score** (menor é melhor)
+
+### Resultados
+- Poisson:
+  - LogLoss ≈ 0.81
+  - Brier ≈ 0.29
+- ML (Platt scaling):
+  - LogLoss ≈ 0.66
+  - Brier ≈ 0.23
+
+### Gráficos de calibração
+![Calibração Poisson](docs/calibracao/reliability_poisson.png)
+![Calibração ML](docs/calibracao/reliability_ml.png)
+
+### Comparação de métricas
+![Métricas](docs/calibracao/compare_logloss_brier.png)
+
+O ML **só é aplicado** nos mercados quando apresenta melhora consistente nessas métricas.
+
 
 ## ▶️ Rodar local (Linux)
 

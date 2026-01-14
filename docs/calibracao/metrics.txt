@@ -1,0 +1,3 @@
+Métricas no teste (temporada mais recente)
+Poisson: LogLoss=0.811916 | Brier=0.294026
+ML (Platt): LogLoss=0.661683 | Brier=0.234455
