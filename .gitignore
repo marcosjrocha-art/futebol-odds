@@ -26,3 +26,9 @@ data/raw/
 Thumbs.db
 .vscode/
 .idea/
+
+# Cache HTTP
+data/http_cache.sqlite
+
+# Templates antigos (não usados)
+templates/
