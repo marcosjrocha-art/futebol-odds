@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Backtest Avançado</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-slate-50 text-slate-900">
+
+<!-- MENU ÚNICO -->
+<div class="p-6 border-b bg-white">
+  <div class="flex flex-wrap gap-2">
+    <a href="/" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700">🏠 Odds</a>
+    <a href="/modelos" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700">📊 Modelos</a>
+    <a href="/backtest" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700">🧪 Backtest</a>
+    <a href="/backtest-avancado" class="px-4 py-2 rounded bg-slate-900 text-white">📈 Avançado</a>
+  </div>
+</div>
+
+<div class="p-6 max-w-7xl mx-auto">
+
+  <h1 class="text-3xl font-bold mb-2">📈 Backtest Avançado</h1>
+  <p class="text-slate-600 mb-6">
+    Avaliação educacional por <b>liga</b>, <b>mercado</b> e <b>faixas de probabilidade</b>.
+    O gráfico mostra onde o ML melhora ou piora em relação ao Poisson.
+  </p>
+
+  <!-- ALERT -->
+  <div id="alert" class="hidden mb-6 p-4 rounded border border-red-300 bg-red-50 text-red-800 text-sm"></div>
+
+  <!-- TOP 5 -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <div class="p-4 rounded-xl border bg-white shadow-sm">
+      <h2 class="font-semibold mb-2">✅ Top 5 (onde ML ajuda mais)</h2>
+      <ul id="bestList" class="text-sm space-y-2"></ul>
+    </div>
+
+    <div class="p-4 rounded-xl border bg-white shadow-sm">
+      <h2 class="font-semibold mb-2">⚠️ Top 5 (onde ML piora / não ajuda)</h2>
+      <ul id="worstList" class="text-sm space-y-2"></ul>
+    </div>
+  </div>
+
+  <!-- SELEÇÃO -->
+  <div class="p-4 rounded-xl border bg-white shadow-sm mb-8">
+    <h2 class="font-semibold mb-4">📊 Gráfico por liga e mercado</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div>
+        <label class="text-sm">Liga</label>
+        <select id="leagueSelect" class="w-full border rounded px-3 py-2"></select>
+      </div>
+
+      <div>
+        <label class="text-sm">Mercado</label>
+        <select id="marketSelect" class="w-full border rounded px-3 py-2"></select>
+      </div>
+    </div>
+
+    <!-- PLOT -->
+    <div class="mt-4">
+      <img id="advPlot" class="rounded-xl border w-full hidden" />
+      <div id="noPlotMsg" class="text-sm text-slate-500 italic mt-2">
+        Selecione uma liga e um mercado para visualizar o gráfico.
+      </div>
+    </div>
+  </div>
+
+  <p class="text-xs text-slate-400">
+    Projeto educacional — calibração e validação estatística. Não promete lucro.
+  </p>
+</div>
+
+<script>
+const alertBox = document.getElementById("alert");
+const bestList = document.getElementById("bestList");
+const worstList = document.getElementById("worstList");
+const leagueSelect = document.getElementById("leagueSelect");
+const marketSelect = document.getElementById("marketSelect");
+const plot = document.getElementById("advPlot");
+const noPlotMsg = document.getElementById("noPlotMsg");
+
+function renderItem(r) {
+  const league = r.league || "";
+  const market = r.market || "";
+  const d = (r.delta && typeof r.delta.logloss === "number") ? r.delta.logloss : null;
+  const n = (typeof r.n === "number") ? r.n : null;
+
+  const dStr = (d === null) ? "N/D" : d.toFixed(4);
+  const nStr = (n === null) ? "N/D" : String(n);
+
+  return `
+    <li class="border rounded p-2">
+      <b>${league}</b> — ${market}<br>
+      Δ LogLoss: ${dStr} · n=${nStr}
+    </li>`;
+}
+
+fetch("/static/backtest_adv/summary.json")
+  .then(r => {
+    if (!r.ok) throw new Error("summary.json não encontrado");
+    return r.json();
+  })
+  .then(data => {
+    const best = Array.isArray(data.best) ? data.best : [];
+    const worst = Array.isArray(data.worst) ? data.worst : [];
+
+    // TOP 5 de verdade
+    best.slice(0, 5).forEach(r => { bestList.innerHTML += renderItem(r); });
+    worst.slice(0, 5).forEach(r => { worstList.innerHTML += renderItem(r); });
+
+    // Dropdowns: usar best + worst (cobertura completa)
+    const all = best.concat(worst);
+
+    const leagues = [...new Set(all.map(r => r.league).filter(Boolean))].sort();
+    leagueSelect.innerHTML = `<option value="">Selecione</option>` +
+      leagues.map(l => `<option value="${l}">${l}</option>`).join("");
+
+    const markets = [...new Set(all.map(r => r.market).filter(Boolean))].sort();
+    marketSelect.innerHTML = `<option value="">Selecione</option>` +
+      markets.map(m => `<option value="${m}">${m}</option>`).join("");
+  })
+  .catch(err => {
+    alertBox.textContent = "Não consegui ler /static/backtest_adv/summary.json";
+    alertBox.classList.remove("hidden");
+  });
+
+function updatePlot() {
+  const l = leagueSelect.value;
+  const m = marketSelect.value;
+
+  if (!l || !m) {
+    plot.classList.add("hidden");
+    noPlotMsg.classList.remove("hidden");
+    noPlotMsg.textContent = "Selecione uma liga e um mercado para visualizar o gráfico.";
+    return;
+  }
+
+  const file = `/static/backtest_adv/${l}_${m}_gap_bins.png`;
+  plot.src = file;
+
+  plot.onload = () => {
+    plot.classList.remove("hidden");
+    noPlotMsg.classList.add("hidden");
+  };
+
+  plot.onerror = () => {
+    plot.classList.add("hidden");
+    noPlotMsg.textContent = "Gráfico ainda não disponível para este mercado.";
+    noPlotMsg.classList.remove("hidden");
+  };
+}
+
+leagueSelect.addEventListener("change", updatePlot);
+marketSelect.addEventListener("change", updatePlot);
+</script>
+
+</body>
+</html>
