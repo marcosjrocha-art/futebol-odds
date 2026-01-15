@@ -18,8 +18,10 @@ import numpy as np
 import pandas as pd
 import requests
 import requests_cache
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss, brier_score_loss
 import os
@@ -29,6 +31,10 @@ from fastapi.staticfiles import StaticFiles
 # Pastas
 # ----------------------------
 BASE_DIR = Path(__file__).resolve().parent
+# ----------------------------
+# Templates (Jinja) + Static
+# ----------------------------
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 RAW_DIR = BASE_DIR / "data/raw/mmz4281"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -707,7 +713,8 @@ def view(
                 <button class="px-4 py-2 rounded bg-black text-white">Gerar Odds</button>
                 <a href="/modelos" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">📊 Modelos</a>
                 <a href="/backtest" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">🧪 Backtest</a>
-              </div>
+                <a href="/backtest-avancado" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">📈 Avançado</a>
+           </div>
               <a class="px-4 py-2 rounded border" href="/">Reset</a>
             </div>
           </form>
@@ -838,7 +845,7 @@ def view(
 # ----------------------------
 # Página "Modelos" (Calibração)
 # ----------------------------
-@app.get("/modelos", response_class=HTMLResponse)
+@app.get("/modelos-inline", response_class=HTMLResponse)
 def page_modelos():
     """
     Exibe gráficos de calibração (Poisson vs ML) e métricas do arquivo metrics.txt.
@@ -949,7 +956,7 @@ def page_modelos():
 # ----------------------------
 # Página "Backtest" (educacional)
 # ----------------------------
-@app.get("/backtest", response_class=HTMLResponse)
+@app.get("/backtest-inline", response_class=HTMLResponse)
 def page_backtest():
     """
     Exibe backtest educacional por mercado (Poisson vs ML) com validação temporal.
@@ -1083,3 +1090,38 @@ def page_backtest():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+
+
+# --- FORCE TEMPLATES ROUTES (AUTO) ---
+# Se existir HTML inline para /modelos e /backtest, isso garante que as páginas usem templates/*.html
+# (última rota definida no FastAPI vence)
+
+try:
+    from fastapi import Request
+except Exception:
+    Request = None
+
+def _template_exists(name: str) -> bool:
+    try:
+        return (BASE_DIR / "templates" / name).exists()
+    except Exception:
+        return False
+
+@app.get("/modelos", response_class=HTMLResponse)
+def modelos_page(request: "Request"):
+    if Request is None or not _template_exists("modelos.html"):
+        return HTMLResponse("<h1>templates/modelos.html não encontrado ou Request indisponível</h1>", status_code=500)
+    return templates.TemplateResponse("modelos.html", {"request": request})
+
+@app.get("/backtest", response_class=HTMLResponse)
+def backtest_page(request: "Request"):
+    if Request is None or not _template_exists("backtest.html"):
+        return HTMLResponse("<h1>templates/backtest.html não encontrado ou Request indisponível</h1>", status_code=500)
+    return templates.TemplateResponse("backtest.html", {"request": request})
+
+@app.get("/backtest-avancado", response_class=HTMLResponse)
+def backtest_avancado_page(request: Request):
+    # Página do Backtest Avançado (usa template + assets em /static/backtest_adv)
+    return templates.TemplateResponse("backtest_avancado.html", {"request": request})
+
+# --- END FORCE TEMPLATES ROUTES (AUTO) ---
