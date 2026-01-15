@@ -60,6 +60,7 @@
 
     <!-- PLOT -->
     <div class="mt-4">
+      <div id="fileHint" class="text-xs text-slate-500 mb-2 hidden"></div>
       <img id="advPlot" class="rounded-xl border w-full hidden" />
       <div id="noPlotMsg" class="text-sm text-slate-500 italic mt-2">
         Selecione uma liga e um mercado para visualizar o gráfico.
@@ -80,64 +81,72 @@ const leagueSelect = document.getElementById("leagueSelect");
 const marketSelect = document.getElementById("marketSelect");
 const plot = document.getElementById("advPlot");
 const noPlotMsg = document.getElementById("noPlotMsg");
+const fileHint = document.getElementById("fileHint");
 
-function renderItem(r) {
-  const league = r.league || "";
-  const market = r.market || "";
-  const d = (r.delta && typeof r.delta.logloss === "number") ? r.delta.logloss : null;
-  const n = (typeof r.n === "number") ? r.n : null;
+// Índices carregados do CSV (cobertura completa)
+let leagueNameByCode = {};      // { "E0": "Premier League", ... }
+let marketsByLeague = {};       // { "E0": Set(["1x2_home", ...]), ... }
 
-  const dStr = (d === null) ? "N/D" : d.toFixed(4);
-  const nStr = (n === null) ? "N/D" : String(n);
-
-  return `
-    <li class="border rounded p-2">
-      <b>${league}</b> — ${market}<br>
-      Δ LogLoss: ${dStr} · n=${nStr}
-    </li>`;
+// CSV parser simples (funciona bem para esse arquivo)
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map(h => h.trim());
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+    const cols = line.split(","); // league_name não costuma ter vírgula
+    const obj = {};
+    headers.forEach((h, idx) => obj[h] = (cols[idx] ?? "").trim());
+    rows.push(obj);
+  }
+  return rows;
 }
 
-fetch("/static/backtest_adv/summary.json")
-  .then(r => {
-    if (!r.ok) throw new Error("summary.json não encontrado");
-    return r.json();
-  })
-  .then(data => {
-    const best = Array.isArray(data.best) ? data.best : [];
-    const worst = Array.isArray(data.worst) ? data.worst : [];
+function setAlert(msg) {
+  alertBox.textContent = msg;
+  alertBox.classList.remove("hidden");
+}
 
-    // TOP 5 de verdade
-    best.slice(0, 5).forEach(r => { bestList.innerHTML += renderItem(r); });
-    worst.slice(0, 5).forEach(r => { worstList.innerHTML += renderItem(r); });
+function clearAlert() {
+  alertBox.classList.add("hidden");
+  alertBox.textContent = "";
+}
 
-    // Dropdowns: usar best + worst (cobertura completa)
-    const all = best.concat(worst);
+function fillLeagueSelectAll() {
+  const leagues = Object.keys(leagueNameByCode).sort();
+  leagueSelect.innerHTML = `<option value="">Selecione</option>` +
+    leagues.map(code => {
+      const name = leagueNameByCode[code] || "";
+      const label = name ? `${code} — ${name}` : code;
+      return `<option value="${code}">${label}</option>`;
+    }).join("");
+}
 
-    const leagues = [...new Set(all.map(r => r.league).filter(Boolean))].sort();
-    leagueSelect.innerHTML = `<option value="">Selecione</option>` +
-      leagues.map(l => `<option value="${l}">${l}</option>`).join("");
-
-    const markets = [...new Set(all.map(r => r.market).filter(Boolean))].sort();
-    marketSelect.innerHTML = `<option value="">Selecione</option>` +
-      markets.map(m => `<option value="${m}">${m}</option>`).join("");
-  })
-  .catch(err => {
-    alertBox.textContent = "Não consegui ler /static/backtest_adv/summary.json";
-    alertBox.classList.remove("hidden");
-  });
+function fillMarketSelectForLeague(leagueCode) {
+  const set = marketsByLeague[leagueCode];
+  const markets = set ? Array.from(set).sort() : [];
+  marketSelect.innerHTML = `<option value="">Selecione</option>` +
+    markets.map(m => `<option value="${m}">${m}</option>`).join("");
+}
 
 function updatePlot() {
   const l = leagueSelect.value;
   const m = marketSelect.value;
 
   if (!l || !m) {
+    fileHint.classList.add("hidden");
     plot.classList.add("hidden");
-    noPlotMsg.classList.remove("hidden");
     noPlotMsg.textContent = "Selecione uma liga e um mercado para visualizar o gráfico.";
+    noPlotMsg.classList.remove("hidden");
     return;
   }
 
   const file = `/static/backtest_adv/${l}_${m}_gap_bins.png`;
+  fileHint.textContent = `Arquivo: ${l}_${m}_gap_bins.png`;
+  fileHint.classList.remove("hidden");
+
   plot.src = file;
 
   plot.onload = () => {
@@ -152,7 +161,71 @@ function updatePlot() {
   };
 }
 
-leagueSelect.addEventListener("change", updatePlot);
+// 1) Top 5 via summary.json (como já está)
+fetch("/static/backtest_adv/summary.json")
+  .then(r => {
+    if (!r.ok) throw new Error("summary.json não encontrado");
+    return r.json();
+  })
+  .then(data => {
+    (data.best || []).slice(0, 5).forEach(r => {
+      bestList.innerHTML += `
+        <li class="border rounded p-2">
+          <b>${r.league}</b> — ${r.market}<br>
+          Δ LogLoss: ${r.delta.logloss.toFixed(4)} · n=${r.n}
+        </li>`;
+    });
+
+    (data.worst || []).slice(0, 5).forEach(r => {
+      worstList.innerHTML += `
+        <li class="border rounded p-2">
+          <b>${r.league}</b> — ${r.market}<br>
+          Δ LogLoss: ${r.delta.logloss.toFixed(4)} · n=${r.n}
+        </li>`;
+    });
+  })
+  .catch(err => {
+    setAlert("Não consegui ler /static/backtest_adv/summary.json");
+  });
+
+// 2) Dropdowns completos via metrics_by_league.csv
+fetch("/static/backtest_adv/metrics_by_league.csv")
+  .then(r => {
+    if (!r.ok) throw new Error("metrics_by_league.csv não encontrado");
+    return r.text();
+  })
+  .then(txt => {
+    clearAlert();
+    const rows = parseCSV(txt);
+
+    rows.forEach(r => {
+      const league = (r.league || "").trim();
+      const leagueName = (r.league_name || "").trim();
+      const market = (r.market || "").trim();
+
+      if (!league || !market) return;
+
+      if (leagueName && !leagueNameByCode[league]) {
+        leagueNameByCode[league] = leagueName;
+      }
+      if (!marketsByLeague[league]) marketsByLeague[league] = new Set();
+      marketsByLeague[league].add(market);
+    });
+
+    fillLeagueSelectAll();
+  })
+  .catch(err => {
+    setAlert("Não consegui ler /static/backtest_adv/metrics_by_league.csv (precisa estar em static/backtest_adv/).");
+  });
+
+// Eventos
+leagueSelect.addEventListener("change", () => {
+  const l = leagueSelect.value;
+  // Ao trocar liga, repovoa mercados daquela liga e limpa o gráfico
+  fillMarketSelectForLeague(l);
+  updatePlot();
+});
+
 marketSelect.addEventListener("change", updatePlot);
 </script>
 
