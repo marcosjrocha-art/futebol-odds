@@ -31,3 +31,8 @@ Thumbs.db
 data/http_cache.sqlite
 
 # Templates antigos (não usados)
+
+# backups
+*.bak
+*.bkp*
+*txt.txt
