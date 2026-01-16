@@ -27,6 +27,101 @@ from sklearn.metrics import log_loss, brier_score_loss
 import os
 from fastapi.staticfiles import StaticFiles
 
+# =========================
+# Backtest Avançado (badge)
+# =========================
+import json
+from pathlib import Path
+
+# Mapa (mercados da HOME/UI -> mercados do backtest_avancado)
+MARKET_UI_TO_ADV = {
+    # BTTS FT
+    "btts_ft_yes": "btts_yes",
+    "btts_ft_no": "btts_no",
+
+    # 1X2 FT
+    "1x2_home": "1x2_home",
+    "1x2_draw": "1x2_draw",
+    "1x2_away": "1x2_away",
+
+    # Dupla chance FT
+    "dc_1x": "dc_1x",
+    "dc_12": "dc_12",
+    "dc_2x": "dc_2x",
+
+    # Totais FT (principais)
+    "over_0.5": "over_0.5",
+    "over_1.5": "over_1.5",
+    "over_2.5": "over_2.5",
+    "over_3.5": "over_3.5",
+    "under_0.5": "under_0.5",
+    "under_1.5": "under_1.5",
+    "under_2.5": "under_2.5",
+    "under_3.5": "under_3.5",
+}
+
+_ADV_SUMMARY_CACHE = {"path": None, "data": None}
+
+def _load_adv_summary() -> dict:
+    """
+    Lê static/backtest_adv/summary.json com cache simples.
+    Retorna {} se não existir/der erro.
+    """
+    try:
+        root = Path(__file__).resolve().parent
+        p = root / "static" / "backtest_adv" / "summary.json"
+        if not p.exists():
+            return {}
+        if _ADV_SUMMARY_CACHE["path"] == str(p) and _ADV_SUMMARY_CACHE["data"] is not None:
+            return _ADV_SUMMARY_CACHE["data"]
+        data = json.loads(p.read_text(encoding="utf-8"))
+        _ADV_SUMMARY_CACHE["path"] = str(p)
+        _ADV_SUMMARY_CACHE["data"] = data
+        return data
+    except Exception:
+        return {}
+
+def adv_badge_for(league_code: str, market_ui_key: str) -> dict:
+    """
+    Retorna um badge simples baseado no summary.json do backtest avançado.
+    status: good | bad | neutral | missing
+    """
+    market_adv = MARKET_UI_TO_ADV.get(market_ui_key)
+    if not market_adv:
+        return {"status": "missing", "label": "Sem histórico", "detail": "Mercado não mapeado."}
+
+    data = _load_adv_summary()
+    if not data:
+        return {"status": "missing", "label": "Sem histórico", "detail": "summary.json não encontrado."}
+
+    # As listas do summary.json têm registros com: league, market, delta.logloss, etc.
+    # Vamos procurar match exato (liga + market)
+    all_rows = []
+    all_rows.extend(data.get("best", []) or [])
+    all_rows.extend(data.get("worst", []) or [])
+
+    row = next((r for r in all_rows if r.get("league") == league_code and r.get("market") == market_adv), None)
+    if not row:
+        return {"status": "missing", "label": "Sem histórico", "detail": "Liga/mercado não aparece no resumo."}
+
+    dlog = ((row.get("delta") or {}).get("logloss"))
+    try:
+        dlog = float(dlog)
+    except Exception:
+        dlog = None
+
+    # Regra simples e bem “explicável”:
+    #  - dlog > 0  => ML melhorou vs Poisson (bom)
+    #  - dlog < 0  => ML piorou (ruim)
+    #  - dlog == 0 ou None => neutro
+    if dlog is None:
+        return {"status": "neutral", "label": "Neutro", "detail": "Sem delta numérico."}
+    if dlog > 0:
+        return {"status": "good", "label": "📈 Valor", "detail": f"ML melhorou (ΔLogLoss={dlog:.4f})"}
+    if dlog < 0:
+        return {"status": "bad", "label": "⚠️ Cautela", "detail": f"ML piorou (ΔLogLoss={dlog:.4f})"}
+    return {"status": "neutral", "label": "Neutro", "detail": "ΔLogLoss≈0"}
+
 # ----------------------------
 # Pastas
 # ----------------------------
