@@ -7,6 +7,7 @@
 # - Dupla chance 1X / 12 / 2X
 # - Cards: 5 placares FT mais prováveis e 5 menos prováveis
 # - NOVO: limitar cards de placar a no máximo 5x5
+# - NOVO: Badge do Backtest Avançado nas 5 melhores apostas
 # ============================================================
 
 import time
@@ -24,14 +25,11 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss, brier_score_loss
-import os
-from fastapi.staticfiles import StaticFiles
+import json
 
 # =========================
 # Backtest Avançado (badge)
 # =========================
-import json
-from pathlib import Path
 
 # Mapa (mercados da HOME/UI -> mercados do backtest_avancado)
 MARKET_UI_TO_ADV = {
@@ -94,8 +92,6 @@ def adv_badge_for(league_code: str, market_ui_key: str) -> dict:
     if not data:
         return {"status": "missing", "label": "Sem histórico", "detail": "summary.json não encontrado."}
 
-    # As listas do summary.json têm registros com: league, market, delta.logloss, etc.
-    # Vamos procurar match exato (liga + market)
     all_rows = []
     all_rows.extend(data.get("best", []) or [])
     all_rows.extend(data.get("worst", []) or [])
@@ -110,10 +106,6 @@ def adv_badge_for(league_code: str, market_ui_key: str) -> dict:
     except Exception:
         dlog = None
 
-    # Regra simples e bem “explicável”:
-    #  - dlog > 0  => ML melhorou vs Poisson (bom)
-    #  - dlog < 0  => ML piorou (ruim)
-    #  - dlog == 0 ou None => neutro
     if dlog is None:
         return {"status": "neutral", "label": "Neutro", "detail": "Sem delta numérico."}
     if dlog > 0:
@@ -126,10 +118,12 @@ def adv_badge_for(league_code: str, market_ui_key: str) -> dict:
 # Pastas
 # ----------------------------
 BASE_DIR = Path(__file__).resolve().parent
+
 # ----------------------------
 # Templates (Jinja) + Static
 # ----------------------------
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
 RAW_DIR = BASE_DIR / "data/raw/mmz4281"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -470,13 +464,15 @@ def parse_float(x: Optional[float], default: float) -> float:
     except Exception:
         return float(default)
 
-def top_and_bottom_scores_limited(M: Dict[Tuple[int, int], float], k: int = 5, max_score: int = 5) -> Tuple[List[Tuple[str, float, float]], List[Tuple[str, float, float]]]:
-    # Filtra para somente placares 0..max_score x 0..max_score
+def top_and_bottom_scores_limited(
+    M: Dict[Tuple[int, int], float],
+    k: int = 5,
+    max_score: int = 5
+) -> Tuple[List[Tuple[str, float, float]], List[Tuple[str, float, float]]]:
     items = [((h, a), float(p)) for (h, a), p in M.items() if (0 <= h <= max_score and 0 <= a <= max_score)]
-    items.sort(key=lambda x: x[1], reverse=True)  # maior prob primeiro
+    items.sort(key=lambda x: x[1], reverse=True)
 
     top = items[:k]
-    # menor prob primeiro (pega os k últimos e ordena crescente)
     bottom = sorted(items[-k:], key=lambda x: x[1])
 
     top_rows = [(f"{h}-{a}", p, odd(p)) for ((h, a), p) in top]
@@ -487,8 +483,7 @@ def top_and_bottom_scores_limited(M: Dict[Tuple[int, int], float], k: int = 5, m
 # App
 # ============================================================
 
-app = FastAPI(title="Futebol Odds Platform", version="2.3.1")
-
+app = FastAPI(title="Futebol Odds Platform", version="2.3.2")
 
 # Static files (imagens, css, etc.)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -609,13 +604,17 @@ def view(
         ou_ht_rows.append((line, p_over, p_under))
 
     # Placar exato FT/HT (tabelas)
-    cs_ft_table = [(f"{h}-{a}", float(M_FT.get((h, a), 0.0)), odd(float(M_FT.get((h, a), 0.0))))
-                   for h in range(SHOW_CS_FT_MAX + 1) for a in range(SHOW_CS_FT_MAX + 1)]
+    cs_ft_table = [
+        (f"{h}-{a}", float(M_FT.get((h, a), 0.0)), odd(float(M_FT.get((h, a), 0.0))))
+        for h in range(SHOW_CS_FT_MAX + 1) for a in range(SHOW_CS_FT_MAX + 1)
+    ]
     shown_ft = sum(p for _, p, _ in cs_ft_table)
     cs_ft_other = max(0.0, 1.0 - shown_ft)
 
-    cs_ht_table = [(f"{h}-{a}", float(M_HT.get((h, a), 0.0)), odd(float(M_HT.get((h, a), 0.0))))
-                   for h in range(SHOW_CS_HT_MAX + 1) for a in range(SHOW_CS_HT_MAX + 1)]
+    cs_ht_table = [
+        (f"{h}-{a}", float(M_HT.get((h, a), 0.0)), odd(float(M_HT.get((h, a), 0.0))))
+        for h in range(SHOW_CS_HT_MAX + 1) for a in range(SHOW_CS_HT_MAX + 1)
+    ]
     shown_ht = sum(p for _, p, _ in cs_ht_table)
     cs_ht_other = max(0.0, 1.0 - shown_ht)
 
@@ -687,18 +686,98 @@ def view(
 
     best5 = sorted(candidates, key=lambda x: x["score"])[:5]
 
+    # ===== Badge do Backtest Avançado por dica (só FT tradicionais) =====
+    def tip_market_ui_key(name: str) -> Optional[str]:
+        n = (name or "").strip()
+
+        # 1X2 FT
+        if n.startswith("1X2 (FT) — Casa"):
+            return "1x2_home"
+        if n.startswith("1X2 (FT) — Empate"):
+            return "1x2_draw"
+        if n.startswith("1X2 (FT) — Visitante"):
+            return "1x2_away"
+
+        # Dupla chance FT
+        if n.startswith("Dupla Chance (FT) — 1X"):
+            return "dc_1x"
+        if n.startswith("Dupla Chance (FT) — 12"):
+            return "dc_12"
+        if n.startswith("Dupla Chance (FT) — 2X"):
+            return "dc_2x"
+
+        # BTTS FT
+        if n.startswith("BTTS (Ambas Marcam) FT — SIM"):
+            return "btts_ft_yes"
+        if n.startswith("BTTS (Ambas Marcam) FT — NÃO"):
+            return "btts_ft_no"
+
+        # Over/Under FT (ex: "Over (FT) 2.5")
+        if n.startswith("Over (FT) "):
+            line = n.replace("Over (FT) ", "").strip()
+            return f"over_{line}"
+        if n.startswith("Under (FT) "):
+            line = n.replace("Under (FT) ", "").strip()
+            return f"under_{line}"
+
+        # HT e outros não entram no backtest avançado
+        return None
+
+    def render_adv_badge(b: dict) -> str:
+        status = (b or {}).get("status") or "missing"
+        label = (b or {}).get("label") or "Sem histórico"
+        detail = (b or {}).get("detail") or ""
+
+        if status == "good":
+            return (
+                "<span class='inline-flex items-center px-2 py-0.5 rounded-full "
+                "border text-xs bg-green-50 text-green-800 border-green-200'>"
+                f"{html_escape(label)} — {html_escape(detail)}</span>"
+            )
+        if status == "bad":
+            return (
+                "<span class='inline-flex items-center px-2 py-0.5 rounded-full "
+                "border text-xs bg-red-50 text-red-800 border-red-200'>"
+                f"{html_escape(label)} — {html_escape(detail)}</span>"
+            )
+        if status == "neutral":
+            return (
+                "<span class='inline-flex items-center px-2 py-0.5 rounded-full "
+                "border text-xs bg-slate-50 text-slate-700 border-slate-200'>"
+                f"{html_escape(label)} — {html_escape(detail)}</span>"
+            )
+        return (
+            "<span class='inline-flex items-center px-2 py-0.5 rounded-full "
+            "border text-xs bg-slate-50 text-slate-700 border-slate-200'>"
+            f"➖ Backtest Avançado: neutro/sem dado</span>"
+        )
+
     tips_cards = []
     for i, c in enumerate(best5, 1):
+        k_ui = tip_market_ui_key(c["name"])
+        badge_html = ""
+        if k_ui:
+            b = adv_badge_for(league, k_ui)
+            badge_html = render_adv_badge(b)
+        else:
+            badge_html = (
+                "<span class='inline-flex items-center px-2 py-0.5 rounded-full "
+                "border text-xs bg-slate-50 text-slate-700 border-slate-200'>"
+                "➖ Backtest Avançado: não aplicável</span>"
+            )
+
         tips_cards.append(
             '<div class="border rounded-xl p-4 bg-gray-50">'
             f'<div class="text-xs text-gray-500">Dica #{i}</div>'
             f'<div class="text-lg font-semibold">{html_escape(c["name"])}</div>'
             f'<div class="text-sm text-gray-600">Método: {html_escape(c["tag"])}</div>'
+            f'<div class="mt-2">{badge_html}</div>'
             f'<div class="mt-2 text-sm">Prob. final: <b>{c["p_final"]:.4f}</b></div>'
             f'<div class="text-sm">Odd mínima (justa): <b>{c["odd_min"]}</b></div>'
             f'<div class="text-xs text-gray-500 mt-2">Concordância |Poisson-ML|: {c["diff"]:.4f}</div>'
-            '</div>'
+            "</div>"
         )
+
     best5_html = "\n".join(tips_cards) if tips_cards else (
         "<div class='text-sm text-gray-600'>Não achei 5 mercados dentro das faixas. "
         "Tente ampliar odd/prob nas configurações.</div>"
@@ -809,7 +888,7 @@ def view(
                 <a href="/modelos" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">📊 Modelos</a>
                 <a href="/backtest" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">🧪 Backtest</a>
                 <a href="/backtest-avancado" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">📈 Avançado</a>
-           </div>
+              </div>
               <a class="px-4 py-2 rounded border" href="/">Reset</a>
             </div>
           </form>
@@ -938,13 +1017,10 @@ def view(
     """
 
 # ----------------------------
-# Página "Modelos" (Calibração)
+# Página "Modelos" (Calibração) - INLINE (mantida)
 # ----------------------------
 @app.get("/modelos-inline", response_class=HTMLResponse)
 def page_modelos():
-    """
-    Exibe gráficos de calibração (Poisson vs ML) e métricas do arquivo metrics.txt.
-    """
     metrics_path = str(BASE_DIR / "docs/calibracao/metrics.txt")
     try:
         metrics_text = Path(metrics_path).read_text(encoding="utf-8").strip()
@@ -1049,13 +1125,10 @@ def page_modelos():
     return HTMLResponse(content=html)
 
 # ----------------------------
-# Página "Backtest" (educacional)
+# Página "Backtest" (educacional) - INLINE (mantida)
 # ----------------------------
 @app.get("/backtest-inline", response_class=HTMLResponse)
 def page_backtest():
-    """
-    Exibe backtest educacional por mercado (Poisson vs ML) com validação temporal.
-    """
     metrics_path = str(BASE_DIR / "docs/backtest/metrics.txt")
     try:
         metrics_text = Path(metrics_path).read_text(encoding="utf-8").strip()
@@ -1186,15 +1259,14 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
 
-
 # --- FORCE TEMPLATES ROUTES (AUTO) ---
 # Se existir HTML inline para /modelos e /backtest, isso garante que as páginas usem templates/*.html
 # (última rota definida no FastAPI vence)
 
 try:
-    from fastapi import Request
+    from fastapi import Request as _Request
 except Exception:
-    Request = None
+    _Request = None
 
 def _template_exists(name: str) -> bool:
     try:
@@ -1204,19 +1276,18 @@ def _template_exists(name: str) -> bool:
 
 @app.get("/modelos", response_class=HTMLResponse)
 def modelos_page(request: "Request"):
-    if Request is None or not _template_exists("modelos.html"):
+    if _Request is None or not _template_exists("modelos.html"):
         return HTMLResponse("<h1>templates/modelos.html não encontrado ou Request indisponível</h1>", status_code=500)
     return templates.TemplateResponse("modelos.html", {"request": request})
 
 @app.get("/backtest", response_class=HTMLResponse)
 def backtest_page(request: "Request"):
-    if Request is None or not _template_exists("backtest.html"):
+    if _Request is None or not _template_exists("backtest.html"):
         return HTMLResponse("<h1>templates/backtest.html não encontrado ou Request indisponível</h1>", status_code=500)
     return templates.TemplateResponse("backtest.html", {"request": request})
 
 @app.get("/backtest-avancado", response_class=HTMLResponse)
 def backtest_avancado_page(request: Request):
-    # Página do Backtest Avançado (usa template + assets em /static/backtest_adv)
     return templates.TemplateResponse("backtest_avancado.html", {"request": request})
 
 # --- END FORCE TEMPLATES ROUTES (AUTO) ---
