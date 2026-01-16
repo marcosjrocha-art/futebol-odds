@@ -885,8 +885,8 @@ def view(
             <div class="md:col-span-6 flex gap-2 mt-3">
               <div class="flex gap-2 flex-wrap">
                 <button class="px-4 py-2 rounded bg-black text-white">Gerar Odds</button>
-                <a href="/modelos" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">📊 Modelos</a>
-                <a href="/backtest" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">🧪 Backtest</a>
+                <a href="/modelos-inline" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">📊 Modelos</a>
+                <a href="/backtest-inline" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">🧪 Backtest</a>
                 <a href="/backtest-avancado" class="px-4 py-2 rounded bg-slate-800 text-white hover:bg-slate-700 transition">📈 Avançado</a>
               </div>
               <a class="px-4 py-2 rounded border" href="/">Reset</a>
@@ -1054,7 +1054,7 @@ def page_modelos():
             <span class="px-4 py-2 rounded-lg bg-slate-700 text-white cursor-default">
               📊 Modelos
             </span>
-            <a href="/backtest" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
+            <a href="/backtest-inline" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
               🧪 Backtest
             </a>
           </div>
@@ -1159,7 +1159,7 @@ def page_backtest():
             <a href="/" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
               🏠 Odds (Home)
             </a>
-            <a href="/modelos" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
+            <a href="/modelos-inline" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition">
               📊 Modelos
             </a>
             <span class="px-4 py-2 rounded-lg bg-slate-700 text-white cursor-default">
