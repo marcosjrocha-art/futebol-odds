@@ -1274,18 +1274,6 @@ def _template_exists(name: str) -> bool:
     except Exception:
         return False
 
-@app.get("/modelos", response_class=HTMLResponse)
-def modelos_page(request: "Request"):
-    if _Request is None or not _template_exists("modelos.html"):
-        return HTMLResponse("<h1>templates/modelos.html não encontrado ou Request indisponível</h1>", status_code=500)
-    return templates.TemplateResponse("modelos.html", {"request": request})
-
-@app.get("/backtest", response_class=HTMLResponse)
-def backtest_page(request: "Request"):
-    if _Request is None or not _template_exists("backtest.html"):
-        return HTMLResponse("<h1>templates/backtest.html não encontrado ou Request indisponível</h1>", status_code=500)
-    return templates.TemplateResponse("backtest.html", {"request": request})
-
 @app.get("/backtest-avancado", response_class=HTMLResponse)
 def backtest_avancado_page(request: Request):
     return templates.TemplateResponse("backtest_avancado.html", {"request": request})
